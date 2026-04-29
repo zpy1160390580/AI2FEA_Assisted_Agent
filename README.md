@@ -1,49 +1,49 @@
-# Finite Element Analysis (FEA) Assisted Agent
+# 有限元分析 (FEA) 辅助智能体
 
-## Overview
-The **FEA Assisted Agent** automates Abaqus finite element simulations. It leverages OpenAI models through **LlamaIndex** and presents a Streamlit interface for executing jobs, extracting stresses and running parametric studies. Phoenix provides tracing and evaluation capabilities so each run can be analysed in detail.
-
----
-
-## Features
-
-1. **Abaqus Input File Generator** – Creates parameterised `.inp` files and stores them under `src/abaqus_files`.
-2. **Abaqus Job Executor** – Runs the simulation and gathers all generated output files.
-3. **Von‑Mises Stress Extractor** – Parses the ODB file and records the peak stress value in `max_vm_stress.txt`.
-4. **Parametric Studies** – Uses a ReAct-based agent to automate multiple displacement trials.
-5. **Real-Time Stress Evaluation** – Logs whether the stress exceeds the `STRESS_THRESHOLD` during each step.
+## 概述
+**FEA 辅助智能体**自动化 Abaqus 有限元仿真流程。它通过 **LlamaIndex** 调用 OpenAI 模型，并提供 Streamlit 界面用于执行作业、提取应力和运行参数化研究。Phoenix 提供追踪和评估功能，以便详细分析每次运行。
 
 ---
 
-## Workflow
-1. **User Query Input:** Submit a request describing the desired analysis.
-2. **Task Automation:** The agent selects tools and performs the simulation steps.
-3. **Real-time Updates:** Intermediate reasoning and outputs are shown while the job runs.
-4. **Final Results:** The agent summarises the outcome and recorded evaluations.
+## 功能特性
+
+1. **Abaqus 输入文件生成器** – 创建参数化的 `.inp` 文件并存储在 `src/abaqus_files` 目录下。
+2. **Abaqus 作业执行器** – 运行仿真并收集所有生成的输出文件。
+3. **Von-Mises 应力提取器** – 解析 ODB 文件并将峰值应力记录在 `max_vm_stress.txt` 中。
+4. **参数化研究** – 使用基于 ReAct 的智能体自动执行多次位移试验。
+5. **实时应力评估** – 在每个步骤中记录应力是否超过 `STRESS_THRESHOLD` 阈值。
 
 ---
 
-## Technologies Used
-- **Streamlit** for the user interface.
-- **LlamaIndex** for agent and tool integration.
-- **Phoenix** for tracing and grading tool calls and answers.
-- **OpenAI** models for both the agent and evaluation judges.
-- **Custom Modules:** `tools`, `prompt_temp`, and `eval_utils`.
-
-### Evaluation Features
-- **Tool-Calling and Unit Evaluation** – Grades whether the chosen tool and units are correct.
-- **Final Result Evaluation** – Detects hallucination and checks if stress exceeds the configured threshold.
-- **Stress Threshold Logging** – Adds a metric to the latest agent step whenever a new stress value is produced.
+## 工作流程
+1. **用户查询输入：** 提交描述所需分析的请求。
+2. **任务自动化：** 智能体选择工具并执行仿真步骤。
+3. **实时更新：** 在作业运行时显示中间推理和输出。
+4. **最终结果：** 智能体总结结果和记录的评估。
 
 ---
 
-## Running the Application
-1. Install the requirements:
+## 使用的技术
+- **Streamlit** 用于用户界面。
+- **LlamaIndex** 用于智能体和工具集成。
+- **Phoenix** 用于追踪和评分工具调用及答案。
+- **OpenAI** 模型用于智能体和评估判断。
+- **自定义模块：** `tools`、`prompt_temp` 和 `eval_utils`。
+
+### 评估功能
+- **工具调用和单位评估** – 评分所选工具和单位是否正确。
+- **最终结果评估** – 检测幻觉并检查应力是否超过配置的阈值。
+- **应力阈值记录** – 每当产生新的应力值时，向最新的智能体步骤添加指标。
+
+---
+
+## 运行应用程序
+1. 安装依赖：
    ```bash
    pip install -r requirements.txt
    ```
-2. Start the Streamlit app:
+2. 启动 Streamlit 应用：
    ```bash
    streamlit run app.py
    ```
-   Set the `STRESS_THRESHOLD` environment variable if a different limit is desired.
+   如需不同的限制值，可设置 `STRESS_THRESHOLD` 环境变量。
