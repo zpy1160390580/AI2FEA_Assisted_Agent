@@ -1,0 +1,4 @@
+# 添加 .env 到 .gitignore，防止提交敏感信息
+config_files/.env
+__pycache__
+FEA_Results

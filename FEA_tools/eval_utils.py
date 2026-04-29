@@ -64,7 +64,7 @@ def run_eval(
     )
     return graded
 
-def parse_stress_mpa(path="src/abaqus_files/max_vm_stress.txt"):
+def parse_stress_mpa(path="FEA_Results/max_vm_stress.txt"):
     """Return the stress value in MPa if file exists, else None."""
     try:
         with open(path) as f:

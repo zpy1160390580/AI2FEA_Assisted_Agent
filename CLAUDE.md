@@ -2,15 +2,24 @@
 
 本文件为 Claude Code (claude.ai/code) 在此仓库中工作时提供指导。
 
+## 项目协作规则
+
+- 默认使用中文与用户交流。
+- 默认用中文编写解释性文档、开发说明、代码注释和任务总结。
+- 代码、命令、文件名、包名、API 名称、错误信息、配置字段保持英文原文。
+- 修改代码前，先简要说明将要修改的文件和原因。
+- 不要编造项目中不存在的脚本、依赖或目录。
+
 ## 项目概述
 
-**AI2FEA_Assisted_Agent** 是一个基于 AI 的有限元分析辅助系统，通过 LlamaIndex 和 OpenAI 模型自动化 Abaqus 仿真工作流。该项目实现了从模型生成、作业执行到应力提取的全流程自动化，并集成了 Phoenix 可观测性平台用于追踪和评估智能体的决策质量。
+**AI2FEA_Assisted_Agent** 是一个基于 AI 的有限元分析辅助系统，通过 LlamaIndex 和硅基流动平台的 DeepSeek 模型自动化 Abaqus 仿真工作流。该项目实现了从模型生成、作业执行到应力提取的全流程自动化，并集成了 Phoenix 可观测性平台用于追踪和评估智能体的决策质量。
 
 ### 核心功能
 - **智能体驱动的仿真自动化**：使用 ReAct (Reasoning + Acting) 架构的 AI 智能体自动规划和执行 Abaqus 仿真任务
 - **参数化研究**：自动执行多次仿真以找到满足应力阈值的最优位移参数
 - **实时评估**：通过 Phoenix 追踪工具调用、单位正确性和幻觉检测
 - **交互式界面**：Streamlit Web 应用提供用户友好的查询和结果展示
+- **支持硅基流动平台**：使用国产 DeepSeek-V3 模型，性能优异且成本更低
 
 ---
 
@@ -18,16 +27,23 @@
 
 ```
 AI2FEA_Assisted_Agent/
-├── app.py                          # Streamlit 主应用程序
-├── demo.ipynb                      # 演示 Jupyter Notebook
+├── main.py                         # Streamlit 主应用（带详细注释）
 ├── requirements.txt                # Python 依赖
-├── src/
-│   ├── tools.py                    # 核心工具函数（生成输入文件、运行作业、提取应力）
+├── demo.ipynb                      # 演示 Jupyter Notebook
+├── .gitignore                      # Git 忽略文件
+├── config_files/                   # 配置文件夹
+│   ├── README.md                   # 配置文件夹说明
+│   ├── config.py                   # 主配置文件（所有参数集中管理）
+│   ├── .env.example                # 环境变量模板（可提交）
+│   └── .env                        # 实际环境变量（不提交，用户创建）
+├── FEA_tools/                      # FEA 工具模块
+│   ├── tools.py                    # 核心工具函数（中文注释）
 │   ├── prompt_temp.py              # ReAct 系统提示词和评估模板
-│   ├── eval_utils.py               # 评估工具函数
-│   └── utils/
-│       ├── create_inp_file.py      # Abaqus Python 脚本：生成 .inp 文件
-│       └── retrieve_vm_stress.py   # Abaqus Python 脚本：从 ODB 提取应力
+│   └── eval_utils.py               # 评估工具函数
+├── FEA_scripts/                    # Abaqus Python 脚本
+│   ├── create_inp_file.py          # 生成 .inp 文件
+│   └── retrieve_vm_stress.py       # 从 ODB 提取应力
+├── FEA_Results/                    # 仿真文件存储目录（所有生成文件）
 └── artifacts/                      # 存储图像和其他资源
 ```
 
@@ -37,10 +53,16 @@ AI2FEA_Assisted_Agent/
 
 ### 核心技术栈
 - **LlamaIndex**：智能体框架，提供 ReActAgent 和工具集成
-- **OpenAI API**：驱动智能体推理和评估判断（支持 gpt-4o、gpt-4.1 等模型）
+- **硅基流动平台 + DeepSeek-V3**：国产大模型，支持 OpenAI 兼容接口
 - **Streamlit**：Web 应用框架
 - **Phoenix (Arize)**：可观测性平台，用于追踪和评估
 - **Abaqus**：有限元分析软件（需要本地安装）
+
+### 支持的模型
+项目通过硅基流动平台支持以下模型：
+- **deepseek-ai/DeepSeek-V3**：主推模型，671B 参数，性能接近 GPT-4，成本更低
+- **deepseek-ai/DeepSeek-R1**：推理增强模型，适合复杂逻辑任务
+- **Qwen/Qwen2.5-72B-Instruct**：阿里通义千问模型，备选方案
 
 ### 智能体架构
 项目使用 **ReAct (Reasoning + Acting)** 模式：
@@ -95,7 +117,7 @@ AI2FEA_Assisted_Agent/
 ### 环境要求
 - **Python 3.8+**
 - **Abaqus**（需要本地安装并配置环境变量）
-- **OpenAI API Key**（需要在 `.env` 文件中配置）
+- **硅基流动平台 API Key**（需要在 `.env` 文件中配置）
 
 ### 安装步骤
 ```bash
@@ -107,15 +129,69 @@ cd AI2FEA_Assisted_Agent
 pip install -r requirements.txt
 
 # 配置环境变量
-# 创建 .env 文件并添加：
-# OPENAI_API_KEY=your_api_key_here
-# STRESS_THRESHOLD=360.0  # 可选，默认 360 MPa
-# OTEL_EXPORTER_OTLP_ENDPOINT=your_phoenix_endpoint  # 可选
+# 进入配置文件夹
+cd config_files
+
+# 复制 .env.example 为 .env 并编辑：
+cp .env.example .env
+
+# 编辑 .env 文件，添加以下配置：
+# SILICONFLOW_API_KEY=your_api_key_here  # 从 https://cloud.siliconflow.cn/account/ak 获取
+# 其他配置参数请参考 config.py 文件中的详细说明
+
+# 返回项目根目录
+cd ..
 ```
+
+### 配置说明
+
+所有配置参数都集中在 `config_files/` 文件夹中，包含详细的中文注释。
+
+#### 配置文件夹结构
+```
+config_files/
+├── README.md        # 配置文件夹说明
+├── config.py        # 主配置文件（所有参数）
+├── .env.example     # 环境变量模板（可提交）
+└── .env             # 实际环境变量（不提交）
+```
+
+#### 配置文件分离
+- **`.env` 文件**：仅存储敏感信息（API Key），不提交到 Git
+- **`config.py` 文件**：所有其他配置参数，包含详细注释，可提交到 Git
+- **`.env.example`**：环境变量模板，供团队成员参考
+
+#### API 配置
+- `SILICONFLOW_API_KEY`：硅基流动平台 API Key（必填）
+- `SILICONFLOW_BASE_URL`：API 基础 URL（默认：https://api.siliconflow.cn/v1）
+
+#### 模型配置
+- `MODEL_NAME`：主模型名称（默认：deepseek-ai/DeepSeek-V3）
+- `EVAL_MODEL_NAME`：评估模型名称
+- `TEMPERATURE`：温度参数（0.0-1.0，默认：0.7）
+- `MAX_TOKENS`：最大输出 tokens（默认：4096）
+
+#### 仿真配置
+- `STRESS_THRESHOLD`：应力阈值（默认：360.0 MPa）
+- `MAX_ITERATIONS`：智能体最大迭代次数（默认：100）
+- `MAX_DISPLACEMENT`：最大位移限制（默认：0.2 m）
+
+详细配置说明请查看 [config.py](config.py) 文件。
+
+### 获取硅基流动平台 API Key
+1. 访问 [硅基流动平台](https://cloud.siliconflow.cn/)
+2. 注册并登录账号
+3. 进入 [API Key 管理页面](https://cloud.siliconflow.cn/account/ak)
+4. 创建新的 API Key 并复制到 `.env` 文件中
+
+### 模型选择建议
+- **智能体主模型**：推荐使用 `deepseek-ai/DeepSeek-V3`，性能强大且成本低
+- **评估模型**：可使用相同的 DeepSeek-V3，或选择 DeepSeek-R1 以获得更强的推理能力
+- **成本优化**：如需降低成本，评估模型可选择 `Qwen/Qwen2.5-72B-Instruct`
 
 ### 运行应用
 ```bash
-streamlit run app.py
+streamlit run main.py
 ```
 
 ### 典型使用场景
@@ -199,9 +275,19 @@ streamlit run app.py
 - Phoenix 追踪会增加少量开销，生产环境可选择性禁用
 
 ### API 成本
-- 每次查询会调用多次 OpenAI API（智能体推理 + 评估）
-- 建议使用 gpt-4o-mini 或 gpt-4.1-nano 作为评估模型以降低成本
+- 每次查询会调用多次大模型 API（智能体推理 + 评估）
+- **硅基流动平台定价**（参考价格，以官网为准）：
+  - DeepSeek-V3：约 ¥0.002/1K tokens（输入），¥0.008/1K tokens（输出）
+  - DeepSeek-R1：约 ¥0.0014/1K tokens（输入），¥0.0028/1K tokens（输出）
+  - Qwen2.5-72B：约 ¥0.0035/1K tokens（输入），¥0.0035/1K tokens（输出）
+- 相比 OpenAI GPT-4，成本降低约 90%
 - 可通过 Phoenix 查看详细的 token 使用情况
+
+### 硅基流动平台优势
+- **成本低**：相比 OpenAI API 价格降低 10-20 倍
+- **速度快**：国内访问延迟低，无需科学上网
+- **模型优秀**：DeepSeek-V3 在多项基准测试中接近 GPT-4 水平
+- **兼容性好**：完全兼容 OpenAI API 格式，迁移成本低
 
 ---
 
@@ -209,8 +295,39 @@ streamlit run app.py
 
 - **LlamaIndex 文档**：https://docs.llamaindex.ai/
 - **Phoenix 文档**：https://docs.arize.com/phoenix
+- **硅基流动平台**：https://cloud.siliconflow.cn/
+- **DeepSeek 模型文档**：https://api-docs.deepseek.com/
 - **Abaqus Scripting Reference**：Abaqus 安装目录下的文档
 - **ReAct 论文**：Yao et al., "ReAct: Synergizing Reasoning and Acting in Language Models"
+
+---
+
+## 迁移说明（从 OpenAI 到硅基流动）
+
+如果您之前使用的是 OpenAI API，迁移到硅基流动平台非常简单：
+
+### 代码变更
+1. **环境变量**：将 `OPENAI_API_KEY` 替换为 `SILICONFLOW_API_KEY`
+2. **API 基础 URL**：添加 `SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1`
+3. **模型名称**：将 `gpt-4o` 等替换为 `deepseek-ai/DeepSeek-V3`
+
+### LlamaIndex 配置
+```python
+# 旧配置（OpenAI）
+llm = llma_OpenAI(model="gpt-4o")
+
+# 新配置（硅基流动）
+llm = llma_OpenAI(
+    model="deepseek-ai/DeepSeek-V3",
+    api_key=SILICONFLOW_API_KEY,
+    api_base=SILICONFLOW_BASE_URL
+)
+```
+
+### 兼容性说明
+- 硅基流动平台提供 OpenAI 兼容接口，无需修改业务逻辑
+- LlamaIndex 的 `OpenAI` 类支持自定义 `api_base`，可直接连接硅基流动
+- Phoenix 评估功能的 `OpenAIModel` 同样支持自定义 API 端点
 
 ---
 
