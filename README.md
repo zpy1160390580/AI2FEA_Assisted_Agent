@@ -1,5 +1,4 @@
 # AI2FEA 辅助智能体
-本项目最初起源于：https://github.com/Farhad-Davaripour/FEA_Assisted_Agent
 
 基于 AI 的 Abaqus 有限元分析自动化系统，通过 LlamaIndex 和硅基流动平台的 DeepSeek 模型实现仿真工作流的全流程自动化。
 
@@ -355,4 +354,9 @@ MODEL_NAME = "gpt-4o"
 
 ---
 
-**立即开始使用 AI2FEA 辅助智能体，让 AI 为您的有限元分析工作提速！** 🚀
+## 📖 参考项目
+
+本项目在开发过程中参考了以下优秀项目：
+1. https://github.com/Farhad-Davaripour/FEA_Assisted_Agent  
+2. https://github.com/svd-ai-lab/sim-cli  
+
