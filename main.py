@@ -1,8 +1,8 @@
 """
-AI2FEA 辅助智能体 - 主程序
-=========================
+AI2FEA 辅助智能体 - 主程序（LangGraph 版本）
+==============================================
 
-这是一个基于 Streamlit 的 Web 应用，使用 AI 智能体自动化 Abaqus 有限元分析工作流。
+这是一个基于 Streamlit 的 Web 应用，使用 LangGraph 状态图自动化 Abaqus 有限元分析工作流。
 
 主要功能：
 1. 通过自然语言查询控制 Abaqus 仿真
@@ -12,7 +12,7 @@ AI2FEA 辅助智能体 - 主程序
 
 技术栈：
 - Streamlit: Web 界面
-- LlamaIndex: 智能体框架
+- LangGraph: 状态图编排框架
 - 硅基流动平台 + DeepSeek-V3: 大语言模型
 - Phoenix: 可观测性平台（可选）
 - Abaqus: 有限元分析软件
@@ -37,37 +37,32 @@ import pandas as pd
 # Phoenix 可观测性平台
 from phoenix.otel import register
 from phoenix.trace import suppress_tracing, SpanEvaluations
-from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+from openinference.instrumentation.langchain import LangChainInstrumentor
 from phoenix.trace.dsl import SpanQuery
 import phoenix as px
 
-# LlamaIndex 智能体框架
-from llama_index.llms.openai import OpenAI as llma_OpenAI
-from llama_index.core.tools import FunctionTool
-from llama_index.core.agent import ReActAgent
+# LangGraph 状态图框架
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # Phoenix 评估工具
 from phoenix.evals import OpenAIModel
 
 # 导入自定义模块
-from FEA_tools.tools import (
-    generate_input_file,              # 生成 Abaqus 输入文件
-    run_abaqus,                        # 运行 Abaqus 作业
-    extract_von_mises_stress_from_ODB, # 从 ODB 提取应力
-    extract_action,                    # 解析智能体的工具调用
-)
+from graph_agent import create_graph, get_agent_steps, tools
 from FEA_tools.prompt_temp import (
-    react_system_prompt as RA_SYSTEM_PROMPT,           # ReAct 系统提示词
-    TOOL_CALLING_PROMPT_TEMPLATE,                      # 工具调用评估模板
-    TOOL_UNIT_PROMPT_TEMPLATE,                         # 单位正确性评估模板
-    FINAL_HALLUCINATION_PROMPT_TEMPLATE,               # 幻觉检测评估模板
+    react_system_prompt as RA_SYSTEM_PROMPT,
+    TOOL_CALLING_PROMPT_TEMPLATE,
+    TOOL_UNIT_PROMPT_TEMPLATE,
+    FINAL_HALLUCINATION_PROMPT_TEMPLATE,
 )
 from FEA_tools.eval_utils import (
-    run_eval,                          # 运行评估
-    log_stress_eval_real_time,         # 实时记录应力评估
+    run_eval,
+    log_stress_eval_real_time,
 )
+from FEA_tools.tools import extract_action
 
-# 导入配置文件（所有参数都在这里）
+# 导入配置文件
 from config_files import config
 
 # ============================================================================
@@ -75,12 +70,12 @@ from config_files import config
 # ============================================================================
 
 # 从配置文件加载参数
-stress_threshold = config.STRESS_THRESHOLD              # 应力阈值（MPa）
-SILICONFLOW_API_KEY = config.SILICONFLOW_API_KEY       # 硅基流动 API Key
-SILICONFLOW_BASE_URL = config.SILICONFLOW_BASE_URL     # API 基础 URL
-DEFAULT_MODEL = config.MODEL_NAME                       # 主模型名称
-DEFAULT_EVAL_MODEL = config.EVAL_MODEL_NAME            # 评估模型名称
-DEFAULT_EVAL_MODEL_HIGH = config.EVAL_MODEL_HIGH_REASONING  # 高推理评估模型
+stress_threshold = config.STRESS_THRESHOLD
+SILICONFLOW_API_KEY = config.SILICONFLOW_API_KEY
+SILICONFLOW_BASE_URL = config.SILICONFLOW_BASE_URL
+DEFAULT_MODEL = config.MODEL_NAME
+DEFAULT_EVAL_MODEL = config.EVAL_MODEL_NAME
+DEFAULT_EVAL_MODEL_HIGH = config.EVAL_MODEL_HIGH_REASONING
 
 # ============================================================================
 # Phoenix 可观测性初始化（可选）
@@ -104,8 +99,8 @@ def init_observability():
             batch=True,
             set_global_tracer_provider=False,
         )
-        # 为 LlamaIndex 添加追踪
-        LlamaIndexInstrumentor().instrument(skip_dep_check=True, tracer_provider=tp)
+        # 为 LangChain 添加追踪
+        LangChainInstrumentor().instrument(tracer_provider=tp)
         return px.launch_app()
     return None
 
@@ -141,80 +136,44 @@ llm_type_eval_high = st.sidebar.selectbox(
 )
 
 # ============================================================================
-# 工具定义
+# LangGraph 状态图初始化
 # ============================================================================
 
-# 工具 1: Abaqus 输入文件生成器
-abaqus_input_file_tool = FunctionTool.from_defaults(
-    fn=generate_input_file,
-    name="Abaqus_input_file_generator",
-    description=(
-        "生成带有指定位移的 Abaqus 输入文件（单位：米）。"
-        "位移不应超过 0.2 米。"
-    ),
-)
-
-# 工具 2: Abaqus 作业执行器
-abaqus_job_execution_tool = FunctionTool.from_defaults(
-    fn=run_abaqus,
-    name="Abaqus_job_executor",
-    description="运行 Abaqus 作业（使用 cantilever_beam.inp）并收集输出文件。",
-)
-
-# 工具 3: Von-Mises 应力提取器
-von_mises_stress_extraction_tool = FunctionTool.from_defaults(
-    fn=extract_von_mises_stress_from_ODB,
-    name="Von_Mises_stress_extractor",
-    description="从 ODB 文件中提取最大 Von-Mises 应力（返回单位：MPa）。",
-)
-
-# 工具列表（智能体可用的所有工具）
-tools = [
-    abaqus_input_file_tool,
-    abaqus_job_execution_tool,
-    von_mises_stress_extraction_tool,
-]
-
-# ============================================================================
-# 智能体初始化
-# ============================================================================
-
-if "agent" not in st.session_state:
+@st.cache_resource(show_spinner=False)
+def init_agent(_llm_type, _stress_threshold):
     """
-    初始化 ReAct 智能体（仅在首次运行时执行）
+    初始化 LangGraph 状态图
 
-    ReAct (Reasoning + Acting) 架构：
-    1. Thought: 智能体分析当前状态并决定下一步行动
-    2. Action: 选择并调用工具
-    3. Observation: 接收工具返回的结果
-    4. 重复上述循环直到任务完成
+    Args:
+        _llm_type: 模型类型
+        _stress_threshold: 应力阈值
+
+    Returns:
+        编译后的状态图
     """
-
-    # 初始化大语言模型（使用硅基流动平台）
-    llm = llma_OpenAI(
-        model=llm_type,                      # 模型名称
-        api_key=SILICONFLOW_API_KEY,         # API Key
-        api_base=SILICONFLOW_BASE_URL,       # API 基础 URL
-        temperature=config.TEMPERATURE,       # 温度参数（控制随机性）
-        max_tokens=config.MAX_TOKENS          # 最大输出 tokens
+    # 初始化大语言模型
+    llm = ChatOpenAI(
+        model=_llm_type,
+        api_key=SILICONFLOW_API_KEY,
+        base_url=SILICONFLOW_BASE_URL,
+        temperature=config.TEMPERATURE,
+        max_tokens=config.MAX_TOKENS
     )
 
-    # 创建 ReAct 智能体
-    st.session_state.agent = ReActAgent.from_tools(
-        tools,                                # 可用工具列表
-        llm=llm,                              # 大语言模型
-        verbose=config.VERBOSE,               # 是否显示详细日志
-        max_iterations=config.MAX_ITERATIONS  # 最大迭代次数
+    # 添加系统提示词
+    llm = llm.bind(system=RA_SYSTEM_PROMPT())
+
+    # 创建状态图
+    app = create_graph(
+        llm=llm,
+        stress_threshold=_stress_threshold,
+        max_iterations=config.MAX_ITERATIONS
     )
 
-    # 更新智能体的系统提示词
-    with suppress_tracing():
-        st.session_state.agent.update_prompts({
-            "agent_worker:system_prompt": RA_SYSTEM_PROMPT()
-        })
+    return app
 
 # 获取智能体实例
-agent = st.session_state.agent
+agent_graph = init_agent(llm_type, stress_threshold)
 
 # ============================================================================
 # 用户界面
@@ -225,15 +184,18 @@ st.title(config.PAGE_TITLE)
 
 # 项目介绍
 st.markdown("""
-这个 AI 智能体与 Abaqus 无缝集成，自动化仿真工作流，包括模型生成、作业运行和应力数据提取。它简化了以下关键步骤：
+这个 AI 智能体与 Abaqus 无缝集成，使用 **LangGraph 状态图**自动化仿真工作流，包括模型生成、作业运行和应力数据提取。
 
-1. **模型输入生成：** 使用 `generate_input_file` 函数，智能体根据指定参数（如位移）创建 Abaqus 输入文件（`.inp`）。生成的文件被移动到指定目录以供作业执行。
+### LangGraph 架构优势
+- **清晰的状态管理**: 每个步骤的状态都被显式跟踪
+- **条件分支控制**: 可以根据应力值动态调整策略
+- **可视化工作流**: 图结构更易于理解和调试
+- **人机协作**: 支持在关键节点添加人工审核
 
-2. **作业执行：** `run_abaqus` 函数使用准备好的输入文件启动 Abaqus 仿真。完成后，所有相关输出文件被重新定位到特定目录以便组织和后续分析。
-
-3. **应力提取：** 利用 `extract_von_mises_stress_from_ODB` 函数，智能体从仿真输出数据库（ODB）中提取 Von-Mises 应力数据。此信息保存在文件（`max_vm_stress.txt`）中，并存储在同一目录中以便访问。
-
-凭借其模块化设计和对 `os`、`subprocess` 和 `shutil` 等工具的依赖，智能体确保高效处理文件和仿真过程，实现强大的自动化应力分析。
+### 工作流程
+1. **模型输入生成**: 使用 `generate_input_file` 函数，智能体根据指定参数（如位移）创建 Abaqus 输入文件（`.inp`）
+2. **作业执行**: `run_abaqus` 函数使用准备好的输入文件启动 Abaqus 仿真
+3. **应力提取**: 利用 `extract_von_mises_stress_from_ODB` 函数，智能体从仿真输出数据库（ODB）中提取 Von-Mises 应力数据
 
 当前演示展示了智能体在悬臂梁仿真工作流自动化方面的能力，重点是应力提取，如下图所示。
 """)
@@ -254,47 +216,85 @@ query = st.text_area(
 # 提交按钮
 if st.button("提交", type="primary"):
     with st.spinner("处理中..."):
-        # 创建智能体任务
-        task = agent.create_task(query)
+        # 创建进度显示容器
+        progress_container = st.expander("显示进度", expanded=True)
 
-        # 显示进度（可展开）
-        with st.expander("显示进度", expanded=True):
-            client = px.Client()
+        # 用于存储所有步骤
+        all_steps = []
+        final_answer = ""
 
-            # 执行第一步
-            step_output = agent.run_step(task.task_id)
-            st.markdown(step_output.dict()["output"]["response"])
-            log_stress_eval_real_time(client)
+        # 逐步执行智能体
+        try:
+            with progress_container:
+                for step_state in get_agent_steps(
+                    agent_graph,
+                    query,
+                    stress_threshold=stress_threshold,
+                    max_iterations=config.MAX_ITERATIONS
+                ):
+                    all_steps.append(step_state)
 
-            # 循环执行直到任务完成
-            while not step_output.is_last:
-                step_output = agent.run_step(task.task_id)
-                st.markdown(step_output.dict()["output"]["response"])
-                log_stress_eval_real_time(client)
+                    # 显示当前步骤
+                    for node_name, node_state in step_state.items():
+                        st.markdown(f"**节点: {node_name}**")
 
-        # 获取最终答案
-        final_answer = step_output.dict()["output"]["response"]
+                        # 显示消息
+                        if "messages" in node_state:
+                            messages = node_state["messages"]
+                            for msg in messages:
+                                if isinstance(msg, AIMessage):
+                                    if msg.content:
+                                        st.markdown(f"🤖 **AI**: {msg.content}")
+                                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                                        for tool_call in msg.tool_calls:
+                                            st.markdown(
+                                                f"🔧 **工具调用**: {tool_call['name']}({tool_call['args']})"
+                                            )
+                                elif isinstance(msg, ToolMessage):
+                                    st.markdown(f"⚙️ **工具结果**: {msg.content}")
+
+                        # 显示迭代信息
+                        if "iterations" in node_state:
+                            st.markdown(f"*迭代次数: {node_state['iterations']}*")
+
+                        # 显示应力信息
+                        if "max_stress" in node_state and node_state["max_stress"] > 0:
+                            st.markdown(
+                                f"📊 **当前最大应力**: {node_state['max_stress']} MPa "
+                                f"(目标: {stress_threshold} MPa)"
+                            )
+
+                        # 检查是否有最终答案
+                        if "final_answer" in node_state and node_state["final_answer"]:
+                            final_answer = node_state["final_answer"]
+
+                        st.markdown("----")
+
+                # 实时记录应力评估
+                if config.ENABLE_PHOENIX_TRACING:
+                    client = px.Client()
+                    log_stress_eval_real_time(client)
+
+        except Exception as e:
+            st.error(f"执行出错: {str(e)}")
+            import traceback
+            st.code(traceback.format_exc())
 
         # 显示最终答案
-        st.subheader("最终答案：")
-        st.markdown(final_answer)
-
-        # 显示中间推理步骤（可展开）
-        st.subheader("中间推理和执行步骤：")
-        with st.expander("显示步骤"):
-            with suppress_tracing():
-                completed = agent.get_completed_tasks()[-1]
-
-            # 遍历所有推理步骤
-            for step in completed.extra_state["current_reasoning"]:
-                for k, v in step.dict().items():
-                    # 过滤掉不需要显示的字段
-                    if k not in ("return_direct", "action_input", "is_streaming"):
-                        st.markdown(
-                            f"<span style='color:darkblue;font-weight:bold;'>{k}</span>: {v}",
-                            unsafe_allow_html=True,
-                        )
-                st.markdown("----")
+        if final_answer:
+            st.subheader("最终答案：")
+            st.success(final_answer)
+        else:
+            # 从最后一个状态中提取答案
+            if all_steps:
+                last_step = all_steps[-1]
+                for node_state in last_step.values():
+                    if "messages" in node_state:
+                        for msg in reversed(node_state["messages"]):
+                            if isinstance(msg, AIMessage) and msg.content:
+                                st.subheader("最终答案：")
+                                st.markdown(msg.content)
+                                break
 
 # ============================================================================
 # 评估函数
@@ -312,12 +312,11 @@ def tool_utilization_eval():
     Returns:
         评估结果 DataFrame
     """
-    # 使用高推理模型作为评判者
     judge = OpenAIModel(
         model=llm_type_eval_high,
         api_key=SILICONFLOW_API_KEY,
         api_base=SILICONFLOW_BASE_URL,
-        temperature=0  # 评估时使用确定性输出
+        temperature=0
     )
 
     rails = ["correct", "incorrect"]
@@ -373,10 +372,8 @@ def unit_eval():
 
     # 构建工具定义查找表
     tool_lookup = {
-        (getattr(t.metadata, "name", None) if hasattr(t, "metadata") else getattr(t, "name", None)): (
-            t.metadata.description if hasattr(t, "metadata") else ""
-        )
-        for t in tools
+        tool.name: tool.description
+        for tool in tools
     }
 
     return run_eval(
@@ -433,7 +430,7 @@ def hallucination_eval():
         rails=["hallucinated", "not"],
         judge=judge,
         eval_name="Hallucination",
-        post_process=lambda df: df.tail(1),  # 只评估最后一个答案
+        post_process=lambda df: df.tail(1),
         num_steps=1,
         retries=2,
     )

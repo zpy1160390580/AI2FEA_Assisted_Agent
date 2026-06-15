@@ -1,17 +1,19 @@
 # AI2FEA 辅助智能体
 
-基于 AI 的 Abaqus 有限元分析自动化系统，通过 LlamaIndex 和硅基流动平台的 DeepSeek 模型实现仿真工作流的全流程自动化。
+基于 AI 的 Abaqus 有限元分析自动化系统，通过 **LangGraph 状态图**和硅基流动平台的 DeepSeek 模型实现仿真工作流的全流程自动化。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-green.svg)
+![LangGraph](https://img.shields.io/badge/framework-LangGraph-blue.svg)
 ![DeepSeek](https://img.shields.io/badge/model-DeepSeek--V3-orange.svg)
 
 ---
 
 ## ✨ 核心特性
 
-- 🤖 **智能体驱动**：使用 ReAct (Reasoning + Acting) 架构自动规划和执行 Abaqus 仿真任务
+- 🔄 **状态图驱动**：使用 LangGraph 状态图精确控制仿真流程
 - 📊 **参数化研究**：自动执行多次仿真以找到满足应力阈值的最优参数
+- 🎯 **条件分支控制**：根据应力值动态调整执行策略
 - 🔍 **实时评估**：通过 Phoenix 追踪工具调用、单位正确性和幻觉检测
 - 💻 **交互式界面**：Streamlit Web 应用提供用户友好的查询和结果展示
 - 💰 **成本优化**：使用国产 DeepSeek-V3 模型，成本降低 90% 以上
@@ -62,7 +64,17 @@ cp .env.example .env
 - `.env` 包含真实的 API Key（敏感信息），不应提交到 Git
 - 这是业界标准做法，保护敏感信息的同时提供配置模板
 
-### 4. 运行应用
+### 4. 运行测试（可选）
+
+验证 LangGraph 实现是否正常工作：
+
+```bash
+python test_langgraph.py
+```
+
+测试脚本会验证：LLM 连接、状态图创建、工具绑定、简单查询执行。
+
+### 5. 运行应用
 
 ```bash
 streamlit run main.py
@@ -87,9 +99,27 @@ streamlit run main.py
 1. **生成输入文件**：创建位移为 0.02m 的 Abaqus 输入文件
 2. **运行仿真**：执行 Abaqus 作业
 3. **提取应力**：从 ODB 文件读取 Von-Mises 应力（假设为 150 MPa）
-4. **智能推理**：判断需要更大位移，尝试 0.05m
+4. **状态图决策**：reasoning_node 判断需要更大位移，尝试 0.05m
 5. **迭代优化**：重复步骤 1-3，直到应力接近 360 MPa
-6. **返回结果**：报告最优位移和对应的应力值
+6. **检查节点**：check_stress 节点检测到达标，停止并报告结果
+
+### LangGraph 状态图结构
+
+```
+START
+  ↓
+reasoning_node (LLM 推理决策)
+  ↓
+should_continue (条件判断)
+  ↓
+tools (执行工具：生成输入/运行仿真/提取应力)
+  ↓
+reasoning_node (分析结果)
+  ↓
+check_stress (检查应力是否达标)
+  ↓
+[继续迭代 OR 结束]
+```
 
 ---
 
@@ -99,9 +129,9 @@ streamlit run main.py
 
 | 工具 | 功能 | 参数 | 输出 |
 |------|------|------|------|
-| **Abaqus_input_file_generator** | 生成参数化输入文件 | `applied_displacement` (m) | `.inp` 文件 |
-| **Abaqus_job_executor** | 执行仿真作业 | 无 | 输出文件（.odb, .dat 等） |
-| **Von_Mises_stress_extractor** | 提取最大应力 | 无 | 应力值（MPa） |
+| **abaqus_input_file_generator** | 生成参数化输入文件 | `applied_displacement` (m) | `.inp` 文件 |
+| **abaqus_job_executor** | 执行仿真作业 | 无 | 输出文件（.odb, .dat 等） |
+| **von_mises_stress_extractor** | 提取最大应力 | 无 | 应力值（MPa） |
 
 ### 评估系统
 
@@ -185,7 +215,10 @@ MAX_ITERATIONS = 100  # 智能体最大迭代次数
 AI2FEA_Assisted_Agent/
 ├── README.md                       # 完整的项目文档（中文）
 ├── CLAUDE.md                       # Claude Code 指导文档
-├── main.py                         # Streamlit 主应用（带详细注释）
+├── MIGRATION_GUIDE.md              # LlamaIndex → LangGraph 迁移指南
+├── main.py                         # Streamlit 主应用（LangGraph 版本）
+├── graph_agent.py                  # LangGraph 状态图定义
+├── test_langgraph.py               # LangGraph 测试脚本
 ├── requirements.txt                # Python 依赖
 ├── .gitignore                      # Git 忽略文件
 ├── config_files/                   # 配置文件夹
@@ -195,7 +228,7 @@ AI2FEA_Assisted_Agent/
 │   └── .env                        # 实际环境变量（不提交，用户创建）
 ├── FEA_tools/                      # FEA 工具模块
 │   ├── tools.py                    # 核心工具函数（中文注释）
-│   ├── prompt_temp.py              # ReAct 提示词模板
+│   ├── prompt_temp.py              # 系统提示词模板
 │   └── eval_utils.py               # 评估工具
 ├── FEA_scripts/                    # Abaqus Python 脚本
 │   ├── create_inp_file.py          # 生成输入文件
@@ -241,16 +274,38 @@ AI2FEA_Assisted_Agent/
 ## 🔧 技术架构
 
 ### 核心技术栈
-- **LlamaIndex**：智能体框架，提供 ReActAgent 和工具集成
+- **LangGraph**：状态图编排框架，提供精确的流程控制
+- **LangChain**：LLM 应用开发框架
 - **硅基流动平台 + DeepSeek-V3**：国产大模型，支持 OpenAI 兼容接口
 - **Streamlit**：Web 应用框架
 - **Phoenix (Arize)**：可观测性平台，用于追踪和评估
 - **Abaqus**：有限元分析软件
 
-### ReAct 智能体架构
+### LangGraph 状态图架构
 ```
-用户查询 → Thought（思考） → Action（选择工具） → Observation（观察结果） → 循环直到完成
+用户查询 → 初始化状态 → reasoning_node（LLM 推理）
+                           ↓
+              should_continue（条件判断）
+                           ↓
+              tools（工具执行：生成/运行/提取）
+                           ↓
+              reasoning_node（分析结果）
+                           ↓
+              check_stress（检查应力）
+                           ↓
+              [继续迭代 OR 返回最终答案]
 ```
+
+### 为什么选择 LangGraph？
+
+| 特性 | LlamaIndex ReActAgent | LangGraph StateGraph |
+|------|---------------------|---------------------|
+| **流程控制** | 隐式循环 | 显式状态图 |
+| **条件分支** | 有限支持 | 原生支持 |
+| **状态管理** | 自动管理 | 显式跟踪 |
+| **可视化** | 无 | 支持图可视化 |
+| **人机协作** | 不支持 | 支持 interrupt |
+| **调试** | 较困难 | 逐步执行 |
 
 ---
 
@@ -291,15 +346,23 @@ AI2FEA_Assisted_Agent/
 1. 在 Web 界面点击"Show Progress"查看实时推理步骤
 2. 访问 Phoenix 可观测性平台（如已配置）查看完整追踪
 
-### Q5: 如何回退到 OpenAI？
-**A**: 修改 `config.py` 中的配置：
+### Q5: 如何从 LlamaIndex 版本迁移？
+**A**: 查看 [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) 获取详细的迁移步骤。主要步骤：
+1. 卸载 `llama-index` 相关包
+2. 安装 `langgraph` 和 `langchain`
+3. 运行测试脚本验证
+
+### Q6: 如何可视化状态图？
+**A**: 
 ```python
-SILICONFLOW_API_KEY = os.getenv("OPENAI_API_KEY")
-SILICONFLOW_BASE_URL = "https://api.openai.com/v1"
-MODEL_NAME = "gpt-4o"
+from graph_agent import create_graph
+from IPython.display import Image, display
+
+app = create_graph(llm=llm)
+display(Image(app.get_graph().draw_mermaid_png()))
 ```
 
-### Q6: 为什么配置文件在单独的文件夹中？
+### Q7: 为什么配置文件在单独的文件夹中？
 **A**: 
 - **结构清晰**：所有配置文件集中在 `config_files/` 文件夹，易于管理
 - **职责分离**：`.env` 管敏感信息，`config.py` 管其他参数
@@ -310,9 +373,10 @@ MODEL_NAME = "gpt-4o"
 
 ## 📚 相关资源
 
+- **LangGraph 文档**：https://langchain-ai.github.io/langgraph/
+- **LangChain 文档**：https://python.langchain.com/
 - **硅基流动平台**：https://cloud.siliconflow.cn/
 - **DeepSeek 模型文档**：https://api-docs.deepseek.com/
-- **LlamaIndex 文档**：https://docs.llamaindex.ai/
 - **Phoenix 文档**：https://docs.arize.com/phoenix
 - **Abaqus Scripting Reference**：Abaqus 安装目录下的文档
 
@@ -339,7 +403,8 @@ MODEL_NAME = "gpt-4o"
 
 ## 🙏 致谢
 
-- [LlamaIndex](https://www.llamaindex.ai/) - 强大的智能体框架
+- [LangGraph](https://langchain-ai.github.io/langgraph/) - 强大的状态图编排框架
+- [LangChain](https://www.langchain.com/) - LLM 应用开发框架
 - [硅基流动](https://siliconflow.cn/) - 提供高性能、低成本的 AI 推理服务
 - [DeepSeek](https://www.deepseek.com/) - 优秀的开源大模型
 - [Arize Phoenix](https://phoenix.arize.com/) - 可观测性平台

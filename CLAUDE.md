@@ -12,11 +12,12 @@
 
 ## 项目概述
 
-**AI2FEA_Assisted_Agent** 是一个基于 AI 的有限元分析辅助系统，通过 LlamaIndex 和硅基流动平台的 DeepSeek 模型自动化 Abaqus 仿真工作流。该项目实现了从模型生成、作业执行到应力提取的全流程自动化，并集成了 Phoenix 可观测性平台用于追踪和评估智能体的决策质量。
+**AI2FEA_Assisted_Agent** 是一个基于 AI 的有限元分析辅助系统，通过 LangGraph 状态图和硅基流动平台的 DeepSeek 模型自动化 Abaqus 仿真工作流。该项目实现了从模型生成、作业执行到应力提取的全流程自动化，并集成了 Phoenix 可观测性平台用于追踪和评估智能体的决策质量。
 
 ### 核心功能
-- **智能体驱动的仿真自动化**：使用 ReAct (Reasoning + Acting) 架构的 AI 智能体自动规划和执行 Abaqus 仿真任务
+- **状态图驱动的仿真自动化**：使用 LangGraph 状态图架构精确控制 Abaqus 仿真任务的执行流程
 - **参数化研究**：自动执行多次仿真以找到满足应力阈值的最优位移参数
+- **条件分支控制**：根据应力值动态调整执行策略，支持智能重试和优化
 - **实时评估**：通过 Phoenix 追踪工具调用、单位正确性和幻觉检测
 - **交互式界面**：Streamlit Web 应用提供用户友好的查询和结果展示
 - **支持硅基流动平台**：使用国产 DeepSeek-V3 模型，性能优异且成本更低
@@ -27,7 +28,8 @@
 
 ```
 AI2FEA_Assisted_Agent/
-├── main.py                         # Streamlit 主应用（带详细注释）
+├── main.py                         # Streamlit 主应用（LangGraph 版本）
+├── graph_agent.py                  # LangGraph 状态图定义
 ├── requirements.txt                # Python 依赖
 ├── demo.ipynb                      # 演示 Jupyter Notebook
 ├── .gitignore                      # Git 忽略文件
@@ -38,7 +40,7 @@ AI2FEA_Assisted_Agent/
 │   └── .env                        # 实际环境变量（不提交，用户创建）
 ├── FEA_tools/                      # FEA 工具模块
 │   ├── tools.py                    # 核心工具函数（中文注释）
-│   ├── prompt_temp.py              # ReAct 系统提示词和评估模板
+│   ├── prompt_temp.py              # 系统提示词和评估模板
 │   └── eval_utils.py               # 评估工具函数
 ├── FEA_scripts/                    # Abaqus Python 脚本
 │   ├── create_inp_file.py          # 生成 .inp 文件
@@ -52,7 +54,7 @@ AI2FEA_Assisted_Agent/
 ## 技术架构
 
 ### 核心技术栈
-- **LlamaIndex**：智能体框架，提供 ReActAgent 和工具集成
+- **LangGraph**：状态图编排框架，提供精确的流程控制和状态管理
 - **硅基流动平台 + DeepSeek-V3**：国产大模型，支持 OpenAI 兼容接口
 - **Streamlit**：Web 应用框架
 - **Phoenix (Arize)**：可观测性平台，用于追踪和评估
@@ -65,26 +67,40 @@ AI2FEA_Assisted_Agent/
 - **Qwen/Qwen2.5-72B-Instruct**：阿里通义千问模型，备选方案
 
 ### 智能体架构
-项目使用 **ReAct (Reasoning + Acting)** 模式：
-1. **Thought**：智能体分析当前状态并决定下一步行动
-2. **Action**：选择并调用工具（如生成输入文件、运行作业）
-3. **Observation**：接收工具返回的结果
-4. 重复上述循环直到任务完成
+项目使用 **LangGraph 状态图** 架构：
+
+**状态图结构**：
+```
+START → 推理节点 → 决策节点 → [工具节点] → 检查节点 → [继续 OR 结束]
+```
+
+**核心节点**：
+1. **reasoning_node**：使用 LLM 分析当前状态并决定下一步行动
+2. **tools (ToolNode)**：执行具体工具（生成输入、运行仿真、提取应力）
+3. **check_stress**：检查应力是否达标，决定是否继续迭代
+4. **条件边**：根据状态动态路由到不同节点
+
+**优势**：
+- **显式状态管理**：每个节点的输入输出都被清晰跟踪
+- **条件分支**：可以根据应力值、迭代次数等动态调整策略
+- **可扩展性**：易于添加新节点（如优化器、验证器）
+- **可视化**：可以导出状态图的可视化表示
+- **人机协作**：支持在关键决策点添加人工审核（interrupt）
 
 ### 三个核心工具
-1. **Abaqus_input_file_generator**
+1. **abaqus_input_file_generator**
    - 功能：生成参数化的 Abaqus 输入文件
    - 参数：`applied_displacement` (单位：米，不超过 0.2m)
-   - 实现：调用 `src/utils/create_inp_file.py` 通过 Abaqus CAE 生成 `.inp` 文件
+   - 实现：调用 `FEA_scripts/create_inp_file.py` 通过 Abaqus CAE 生成 `.inp` 文件
 
-2. **Abaqus_job_executor**
+2. **abaqus_job_executor**
    - 功能：执行 Abaqus 仿真作业
    - 实现：运行 `abaqus job=cantilever_beam` 命令并收集输出文件
 
-3. **Von_Mises_stress_extractor**
+3. **von_mises_stress_extractor**
    - 功能：从 ODB 文件提取最大 Von-Mises 应力
    - 返回：应力值（单位：MPa）
-   - 实现：调用 `src/utils/retrieve_vm_stress.py` 解析 ODB 数据库
+   - 实现：调用 `FEA_scripts/retrieve_vm_stress.py` 解析 ODB 数据库
 
 ---
 
@@ -205,9 +221,9 @@ streamlit run main.py
 1. 生成位移为 0.02m 的输入文件
 2. 运行 Abaqus 作业
 3. 提取应力（假设为 150 MPa）
-4. 推理：需要更大位移，尝试 0.05m
+4. 状态图决策：需要更大位移，尝试 0.05m
 5. 重复步骤 1-3
-6. 当应力接近 360 MPa 时停止并报告结果
+6. 当应力接近 360 MPa 时，check_stress 节点检测到达标，停止并报告结果
 
 ---
 
@@ -240,10 +256,31 @@ streamlit run main.py
 ## 扩展建议
 
 ### 添加新工具
-1. 在 `src/tools.py` 中定义新函数
-2. 使用 `FunctionTool.from_defaults()` 包装为 LlamaIndex 工具
-3. 在 `app.py` 的 `tools` 列表中注册
-4. 更新 ReAct 系统提示词以包含新工具的使用说明
+1. 在 `FEA_tools/tools.py` 中定义新函数
+2. 在 `graph_agent.py` 中使用 `@tool` 装饰器包装为 LangChain 工具
+3. 将新工具添加到 `tools` 列表
+4. 更新系统提示词以包含新工具的使用说明
+
+### 添加新节点
+1. 在 `graph_agent.py` 中定义新的节点函数
+2. 使用 `workflow.add_node("node_name", node_function)` 注册节点
+3. 使用 `workflow.add_edge()` 或 `workflow.add_conditional_edges()` 连接节点
+4. 更新 `AgentState` TypedDict 以包含新的状态字段（如需要）
+
+### 添加条件分支
+```python
+def custom_decision(state: AgentState) -> Literal["path_a", "path_b"]:
+    # 根据状态决定路由
+    if state["some_condition"]:
+        return "path_a"
+    return "path_b"
+
+workflow.add_conditional_edges(
+    "decision_node",
+    custom_decision,
+    {"path_a": "node_a", "path_b": "node_b"}
+)
+```
 
 ### 支持新的 FEA 模型
 1. 在 `src/utils/` 中创建新的 Abaqus Python 脚本
@@ -252,8 +289,16 @@ streamlit run main.py
 
 ### 集成其他 FEA 软件
 - 项目架构支持替换 Abaqus 为其他求解器（如 ANSYS、LS-DYNA）
-- 需要修改 `tools.py` 中的命令调用和文件解析逻辑
-- 保持工具接口不变，智能体无需修改
+- 需要修改 `FEA_tools/tools.py` 中的命令调用和文件解析逻辑
+- 保持工具接口不变，状态图无需修改
+
+### 可视化状态图
+```python
+from IPython.display import Image, display
+
+# 获取状态图的可视化
+display(Image(agent_graph.get_graph().draw_mermaid_png()))
+```
 
 ---
 
@@ -293,41 +338,42 @@ streamlit run main.py
 
 ## 相关资源
 
-- **LlamaIndex 文档**：https://docs.llamaindex.ai/
+- **LangGraph 文档**：https://langchain-ai.github.io/langgraph/
+- **LangChain 文档**：https://python.langchain.com/
 - **Phoenix 文档**：https://docs.arize.com/phoenix
 - **硅基流动平台**：https://cloud.siliconflow.cn/
 - **DeepSeek 模型文档**：https://api-docs.deepseek.com/
 - **Abaqus Scripting Reference**：Abaqus 安装目录下的文档
-- **ReAct 论文**：Yao et al., "ReAct: Synergizing Reasoning and Acting in Language Models"
 
 ---
 
-## 迁移说明（从 OpenAI 到硅基流动）
+## 迁移说明（从 LlamaIndex 到 LangGraph）
 
-如果您之前使用的是 OpenAI API，迁移到硅基流动平台非常简单：
+如果您之前使用的是 LlamaIndex 版本，以下是主要变更：
 
 ### 代码变更
-1. **环境变量**：将 `OPENAI_API_KEY` 替换为 `SILICONFLOW_API_KEY`
-2. **API 基础 URL**：添加 `SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1`
-3. **模型名称**：将 `gpt-4o` 等替换为 `deepseek-ai/DeepSeek-V3`
+1. **依赖库**：
+   - 移除：`llama-index`, `llama-index-core`, `llama-index-llms-openai`
+   - 添加：`langgraph`, `langchain`, `langchain-openai`, `langchain-core`
 
-### LlamaIndex 配置
-```python
-# 旧配置（OpenAI）
-llm = llma_OpenAI(model="gpt-4o")
+2. **架构变更**：
+   - 从 `ReActAgent` 迁移到 `LangGraph StateGraph`
+   - 工具定义从 `FunctionTool.from_defaults()` 改为 `@tool` 装饰器
+   - 显式定义状态管理（`AgentState` TypedDict）
 
-# 新配置（硅基流动）
-llm = llma_OpenAI(
-    model="deepseek-ai/DeepSeek-V3",
-    api_key=SILICONFLOW_API_KEY,
-    api_base=SILICONFLOW_BASE_URL
-)
-```
+3. **新增文件**：
+   - `graph_agent.py`：状态图定义和节点函数
+
+### 优势
+- **更精确的流程控制**：条件分支、循环、状态回溯
+- **更好的可观测性**：每个节点的输入输出都被清晰追踪
+- **更易扩展**：添加新节点（如优化器、验证器）更简单
+- **支持人机协作**：可以在关键决策点添加 interrupt
 
 ### 兼容性说明
-- 硅基流动平台提供 OpenAI 兼容接口，无需修改业务逻辑
-- LlamaIndex 的 `OpenAI` 类支持自定义 `api_base`，可直接连接硅基流动
-- Phoenix 评估功能的 `OpenAIModel` 同样支持自定义 API 端点
+- 工具函数（`FEA_tools/tools.py`）无需修改，可以直接复用
+- Phoenix 评估功能完全兼容，只需修改导入（从 `llama_index` 改为 `langchain`）
+- Streamlit 界面保持一致，用户体验无变化
 
 ---
 
